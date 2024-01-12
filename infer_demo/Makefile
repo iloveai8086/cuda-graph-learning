@@ -1,5 +1,5 @@
-TRT=/usr/local/TensorRT/
-CUDA=/usr/local/cuda
+TRT=/media/ros/A666B94D66B91F4D/ros/new_deploy/TensorRT-8.5.3.1.Linux.x86_64-gnu.cuda-11.8.cudnn8.6/TensorRT-8.5.3.1/
+CUDA=/usr/local/cuda-11.6
 INCLUDE=-I$(CUDA)/include/ \
 -I$(TRT)/include \
 -Isrc
@@ -25,4 +25,7 @@ $(TRT_LIB)libnvinfer_plugin.so \
 
 ernie_test:
 	g++ src/ernie_infer_demo.cpp src/trt_helper.cc -o ernie_infer_demo \
+		$(CXX_FLAGS) $(INCLUDE) -Xlinker "-(" $(LIBS) -Xlinker "-)"
+ernie_test2:
+	g++ src/ernie_infer_demo.cpp src/trt_helper.cc -o ernie_infer_demo_cuda_graph \
 		$(CXX_FLAGS) $(INCLUDE) -Xlinker "-(" $(LIBS) -Xlinker "-)"

@@ -51,9 +51,9 @@ static const int MAX_SEQ = 128;
 //     uint64_t timestamp;
 // };
 
-void split_string(const std::string& str,
-                  const std::string& delimiter,
-                  std::vector<std::string>& fields) {
+void split_string(const std::string &str,
+                  const std::string &delimiter,
+                  std::vector <std::string> &fields) {
     size_t pos = 0;
     size_t start = 0;
     size_t length = str.length();
@@ -69,18 +69,18 @@ void split_string(const std::string& str,
     }
 }
 
-void field2vec(const std::string& input_str,
+void field2vec(const std::string &input_str,
                bool padding,
-               std::vector<int>* shape_info,
-               std::vector<int>* i64_vec,
-               std::vector<float>* f_vec = nullptr) {
-    std::vector<std::string> i_f;
+               std::vector<int> *shape_info,
+               std::vector<int> *i64_vec,
+               std::vector<float> *f_vec = nullptr) {
+    std::vector <std::string> i_f;
     split_string(input_str, ":", i_f);
-    std::vector<std::string> i_v;
+    std::vector <std::string> i_v;
     split_string(i_f[1], " ", i_v);
-    std::vector<std::string> s_f;
+    std::vector <std::string> s_f;
     split_string(i_f[0], " ", s_f);
-    for (auto& f : s_f) {
+    for (auto &f: s_f) {
         shape_info->push_back(std::stoi(f));
     }
     int batch_size = shape_info->at(0);
@@ -101,7 +101,7 @@ void field2vec(const std::string& input_str,
                 f_vec->push_back(std::stof(i_v[i * seq_len + j]));
             }
             // padding to MAX_SEQ_LEN
-            for (int j = 0; padding && j < MAX_SEQ - seq_len; ++ j) {
+            for (int j = 0; padding && j < MAX_SEQ - seq_len; ++j) {
                 f_vec->push_back(0);
             }
         }
@@ -111,16 +111,16 @@ void field2vec(const std::string& input_str,
     }
 }
 
-void line2sample(const std::string& line, sample* sout) {
-    std::vector<std::string> fields;
+void line2sample(const std::string &line, sample *sout) {
+    std::vector <std::string> fields;
     split_string(line, ";", fields);
     assert(fields.size() == 14);
     // parse qid
-    std::vector<std::string> qid_f;
+    std::vector <std::string> qid_f;
     split_string(fields[0], ":", qid_f);
     sout->qid = qid_f[1];
     // Parse label
-    std::vector<std::string> label_f;
+    std::vector <std::string> label_f;
     split_string(fields[1], ":", label_f);
     sout->label = label_f[1];
     // Parse input field
@@ -142,46 +142,130 @@ void line2sample(const std::string& line, sample* sout) {
 }
 
 int main(int argc, char *argv[]) {
-  // init
-  std::string model_para_file = argv[1];
-  std::cout << model_para_file << std::endl;
-  auto trt_helper = new TrtHepler(model_para_file, 0);
-  // preprocess
-  std::string aline;
-  std::ifstream ifs;
-  ifs.open(argv[2], std::ios::in);
-  std::ofstream ofs;
-  ofs.open(argv[3], std::ios::out);
-  std::vector<sample> sample_vec;
-  while (std::getline(ifs, aline)) {
-      sample s;
-      line2sample(aline, &s);
-      sample_vec.push_back(s);
-  }
+    if (argc != 4) {
+        std::cout << "error number param!\n";
+        return -1;
+    }
 
-  // inference
-  for (auto& s : sample_vec) {
-      // //run(predictor.get(), s);
-      trt_helper->Forward(s);
-  }
+    int argc_idx = 1;
+    std::string model_file = argv[argc_idx++];
+    std::string test_file = argv[argc_idx++];
+    std::string out_file = argv[argc_idx++];
 
-  // postprocess
-  for (auto& s : sample_vec) {
-      std::ostringstream oss;
-      oss << s.qid << "\t";
-      oss << s.label << "\t";
-      for (int i = 0; i < s.out_data.size(); ++i) {
-          oss << s.out_data[i];
-          if (i == s.out_data.size() - 1) {
-              oss << "\t";
-          } else {
-              oss << ",";
-          }
-      }
-      oss << s.timestamp << "\n";
-      ofs.write(oss.str().c_str(), oss.str().length());
-  }
-  ofs.close();
-  ifs.close();
-  return 0;
+    std::shared_ptr<TrtEngine> trt_engine(new TrtEngine(model_file, 0));
+    std::vector<int> batchs = {1, 2, 3, 4, 5, 6, 7, 8, 9, 10};
+    // std::vector<int> seq_lens = {1, 32, 64, 96, 128};
+    std::vector<int> seq_lens = {1, 32, 64};
+    auto context_num = batchs.size() * seq_lens.size();
+    assert(trt_engine->engine_->getNbOptimizationProfiles() == context_num);
+
+    std::vector<std::shared_ptr<TrtContext>> trt_contexts(context_num);
+    for (int i = 0; i < context_num; ++i) {
+        auto context = new TrtContext(trt_engine.get(), i);
+        trt_contexts[i].reset(context);  // trick~
+    }
+
+    for (int i = 0; i < context_num; ++i) {
+        trt_contexts[i]->CaptureCudaGraph();
+    }
+
+    // preprocess
+    std::string aline;
+    std::ifstream ifs;
+    ifs.open(test_file, std::ios::in);
+    std::ofstream ofs;
+    ofs.open(out_file, std::ios::out);
+    std::vector <sample> sample_vec;
+    while (std::getline(ifs, aline)) {
+        sample s;
+        line2sample(aline, &s);
+        sample_vec.push_back(s);
+    }
+
+    // inference
+    int idx = 0;
+    for (auto& s : sample_vec) {
+        int batch = s.shape_info_0[0];
+        int seq_len = s.shape_info_0[1];
+
+        int s_idx = 0;
+        for (int i = 0; i < seq_lens.size(); ++i) {
+            if (seq_len < seq_lens[i]) {
+                s_idx = i;
+                break;
+            }
+        }
+        auto batch_idx = batchs[batch - 1] - 1;
+        int context_idx = batch_idx * seq_lens.size() + s_idx;
+        trt_contexts[context_idx]->Forward(s);
+        idx++;
+        if (idx % 100 == 0) {
+            std::cout << "Forward " << idx << std::endl;
+        }
+    }
+
+    // postprocess
+    for (auto& s : sample_vec) {
+        std::ostringstream oss;
+        oss << s.qid << "\t";
+        oss << s.label << "\t";
+        for (int i = 0; i < s.out_data.size(); ++i) {
+                oss << s.out_data[i];
+                if (i == s.out_data.size() - 1) {
+                    oss << "\t";
+                } else {
+                    oss << ",";
+                }
+        }
+                oss << s.timestamp << "\n";
+        ofs.write(oss.str().c_str(), oss.str().length());
+    }
+    ofs.close();
+    ifs.close();
+    return 0;
 }
+
+// int main(int argc, char *argv[]) {
+//     // init
+//     std::string model_para_file = argv[1];
+//     std::cout << model_para_file << std::endl;
+//     auto trt_helper = new TrtHepler(model_para_file, 0);
+//     // preprocess
+//     std::string aline;
+//     std::ifstream ifs;
+//     ifs.open(argv[2], std::ios::in);
+//     std::ofstream ofs;
+//     ofs.open(argv[3], std::ios::out);
+//     std::vector <sample> sample_vec;
+//     while (std::getline(ifs, aline)) {
+//         sample s;
+//         line2sample(aline, &s);
+//         sample_vec.push_back(s);
+//     }
+//
+//     // inference
+//     for (auto &s: sample_vec) {
+//         // //run(predictor.get(), s);
+//         trt_helper->Forward(s);
+//     }
+//
+//     // postprocess
+//     for (auto &s: sample_vec) {
+//         std::ostringstream oss;
+//         oss << s.qid << "\t";
+//         oss << s.label << "\t";
+//         for (int i = 0; i < s.out_data.size(); ++i) {
+//             oss << s.out_data[i];
+//             if (i == s.out_data.size() - 1) {
+//                 oss << "\t";
+//             } else {
+//                 oss << ",";
+//             }
+//         }
+//         oss << s.timestamp << "\n";
+//         ofs.write(oss.str().c_str(), oss.str().length());
+//     }
+//     ofs.close();
+//     ifs.close();
+//     return 0;
+// }

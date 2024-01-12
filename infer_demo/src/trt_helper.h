@@ -20,59 +20,59 @@
     }
 #endif
 
-template <typename T>
+template<typename T>
 using cuda_shared_ptr = std::shared_ptr<T>;
 
 struct InferDeleter {
-  template <typename T>
-  void operator()(T *obj) const {
-    if (obj) {
-      obj->destroy();
+    template<typename T>
+    void operator()(T *obj) const {
+        if (obj) {
+            obj->destroy();
+        }
     }
-  }
 };
 
-template <typename T>
-std::shared_ptr<T> makeShared(T *obj) {
-  if (!obj) {
-    throw std::runtime_error("Failed to create object");
-  }
-  return std::shared_ptr<T>(obj, InferDeleter());
+template<typename T>
+std::shared_ptr <T> makeShared(T *obj) {
+    if (!obj) {
+        throw std::runtime_error("Failed to create object");
+    }
+    return std::shared_ptr<T>(obj, InferDeleter());
 }
 
-template <typename T>
+template<typename T>
 struct CudaDeleter {
-  void operator()(T* buf) {
-    if (buf) cudaFree(buf);
-  }
+    void operator()(T *buf) {
+        if (buf) cudaFree(buf);
+    }
 };
 
-template <typename T>
-void make_cuda_shared(cuda_shared_ptr<T>& ptr, void* cudaMem) {
-  ptr.reset(static_cast<T*>(cudaMem), CudaDeleter<T>());
+template<typename T>
+void make_cuda_shared(cuda_shared_ptr<T> &ptr, void *cudaMem) {
+    ptr.reset(static_cast<T *>(cudaMem), CudaDeleter<T>());
 }
 
 struct TrtDestroyer {
-  template <typename T>
-  void operator()(T *obj) const {
-    if (obj) obj->destroy();
-  }
+    template<typename T>
+    void operator()(T *obj) const {
+        if (obj) obj->destroy();
+    }
 };
 
-template <typename T>
+template<typename T>
 using TrtUniquePtr = std::unique_ptr<T, TrtDestroyer>;
 
-template <typename T>
+template<typename T>
 inline TrtUniquePtr<T> MakeUnique(T *t) {
-  return TrtUniquePtr<T>{t};
+    return TrtUniquePtr<T>{t};
 }
 
-template <typename T>
-inline std::shared_ptr<T> MakeShared(T *t) {
-  return std::shared_ptr<T>(t, TrtDestroyer());
+template<typename T>
+inline std::shared_ptr <T> MakeShared(T *t) {
+    return std::shared_ptr<T>(t, TrtDestroyer());
 }
 
-struct sample{
+struct sample {
     std::string qid;
     std::string label;
     std::vector<int> shape_info_0;
@@ -113,40 +113,95 @@ struct sample{
  * \brief Trt TrtLogger 日志类，全局对象
  */
 class TrtLogger : public nvinfer1::ILogger {
-  using Severity = nvinfer1::ILogger::Severity;
+    using Severity = nvinfer1::ILogger::Severity;
 
- public:
-  explicit TrtLogger(Severity level = Severity::kINFO);
+public:
+    explicit TrtLogger(Severity level = Severity::kINFO);
 
-  ~TrtLogger() = default;
+    ~TrtLogger() = default;
 
-  nvinfer1::ILogger& getTRTLogger();
+    nvinfer1::ILogger &getTRTLogger();
 
-  void log(Severity severity, const char* msg) noexcept override;
+    void log(Severity severity, const char *msg)
 
- private:
-  Severity level_;
+    noexcept override;
+
+private:
+    Severity level_;
 };
 
 class TrtHepler {
- public:
-  TrtHepler(std::string model_param, int dev_id);
+public:
+    TrtHepler(std::string model_param, int dev_id);
 
-  int Forward(sample& s);
+    int Forward(sample &s);
 
-  ~TrtHepler();
+    ~TrtHepler();
 
- private:
-  int _dev_id;
-  // NS_PROTO::ModelParam *_model_param_ptr;
-  std::string _model_param;
-  std::shared_ptr<nvinfer1::ICudaEngine> engine_;
-  std::shared_ptr<nvinfer1::IExecutionContext> context_;
-  cudaStream_t cuda_stream_;
+private:
+    int _dev_id;
+    // NS_PROTO::ModelParam *_model_param_ptr;
+    std::string _model_param;
+    std::shared_ptr <nvinfer1::ICudaEngine> engine_;
+    std::shared_ptr <nvinfer1::IExecutionContext> context_;
+    cudaStream_t cuda_stream_;
 
-  // The all dims of all inputs.
-  std::vector<nvinfer1::Dims> inputs_dims_;
-  std::vector<void*> device_bindings_;
+    // The all dims of all inputs.
+    std::vector <nvinfer1::Dims> inputs_dims_;
+    std::vector<void *> device_bindings_;
+};
+
+// ---------------------------------------------------------------------------------------------------------
+// 新增的代码
+class TrtEngine {
+public:
+    TrtEngine(std::string model_param, int dev_id);
+    ~TrtEngine();
+
+    int dev_id_;
+    std::string _model_param;
+    std::shared_ptr<nvinfer1::ICudaEngine> engine_;
+    TrtLogger trt_logger;
+};
+
+class TrtContext {
+public:
+    TrtContext(TrtEngine* trt_engine, int profile_idx);
+    ~TrtContext();
+    int CaptureCudaGraph();
+    int Forward(sample &s);
+
+    int dev_id_;
+    std::string _model_param;
+    std::shared_ptr<nvinfer1::ICudaEngine> engine_;
+    std::shared_ptr<nvinfer1::IExecutionContext> context_;
+    cudaStream_t cuda_stream_;
+
+    std::vector<nvinfer1::Dims> inputs_dims_;
+
+    std::vector<char*> device_bindings_;
+    std::vector<char*> host_bindings_;
+
+    static std::vector<char*> s_device_bindings_;
+
+    char* h_buffer_;
+    char* d_buffer_;
+
+    int max_batch_;
+    int min_batch_;
+    int max_seq_len_;
+    int min_seq_len_;
+    int start_binding_idx_;
+
+    int profile_idx_;
+
+    int align_input_bytes_;
+    int align_aside_input_bytes_;
+    int whole_bytes_;
+
+    cudaGraph_t graph_;
+    cudaGraphExec_t instance_;
+    bool graph_created_ = false;
 };
 
 // } // BEGIN_LIB_NAMESPACE
